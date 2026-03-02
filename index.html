@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PM FlowSizer</title>
+
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; margin: 16px; max-width: 820px; }
+    .card { border: 1px solid #1CA7EC; border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .row > div { flex: 1; min-width: 220px; }
+    label { font-size: 12px; margin-top: 10px; display: block; }
+    input, button { width: 100%; padding: 10px; border-radius: 10px; border: 1px solid #ccc; }
+    button { font-weight: bold; cursor: pointer; }
+    .big { font-size: 28px; font-weight: 800; }
+    .pill { display: inline-block; padding: 6px 10px; border-radius: 999px; font-weight: 700; color: white; }
+    .muted { color: #666; font-size: 12px; }
+    .recLine {
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px dashed #d1d5db;
+      background: #f9fafb;
+    }
+    .recStrong { font-weight: 800; }
+
+    @media print {
+      .noPrint { display: none !important; }
+      body { margin: 0; max-width: none; }
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Header -->
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:15px;">
+      <!-- <img src="twts-logo.png" alt="Total Water Logo" style="height:70px;"> -->
+      <div>
+        <h2 style="margin:0;">PM FlowSizer</h2>
+        <div class="muted">PVC Sch 80 • Water @ ~60°F</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Single Input -->
+  <div class="card">
+    <h3 style="margin-top:0;">Enter Target Flow</h3>
+    <div class="muted">Tool returns the minimum recommended nominal pipe size.</div>
+
+    <div class="row">
+      <div>
+        <label>Target Flow (GPM)</label>
+        <input id="gpm" type="number" step="1" placeholder="e.g., 60" inputmode="numeric" />
+      </div>
+    </div>
+
+    <div class="muted" style="margin-top:8px;">
+      Rule used: maximum velocity 5.0 ft/s (manufacturer recommendation to avoid surges).
+    </div>
+
+    <div style="margin-top:12px;" class="noPrint">
+      <button type="button" onclick="window.print()">Print / Save as PDF</button>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div class="card">
+    <div class="big" id="out_main">—</div>
+    <div style="margin-top:6px;">
+      <span class="pill" id="out_pill" style="background:#6b7280;">READY</span>
+    </div>
+
+    <div class="recLine" id="out_rec">
+      <div class="muted">Enter a flow rate above to see the recommended pipe size.</div>
+    </div>
+
+    <div class="muted" id="out_detail" style="margin-top:10px; white-space:pre-wrap;">
+      —
+    </div>
+  </div>
+
+  <script>
+    // =========================
+    // CONFIG (TWTS defaults)
+    // =========================
+    const MATERIAL = "pvc";
+    const SCHEDULE = "sch80";
+   const V_TARGET = 5.0; // ft/s (manufacturer-recommended limit to avoid surges)
+
+    // IDs (inches) — PVC Sch 80
+    const PIPE_ID = {
+      pvc: {
+        sch80: {
+          "0.5": 0.546, "0.75": 0.742, "1": 0.957, "1.25": 1.278, "1.5": 1.500,
+          "2": 1.939, "2.5": 2.323, "3": 2.900, "4": 3.826, "5": 4.813, "6": 5.761
+        }
+      }
+    };
+
+    const NPS_ORDER = ["0.5","0.75","1","1.25","1.5","2","2.5","3","4","5","6"];
+
+    function formatNps(nps) {
+      const map = {
+        "0.5": '1/2"', "0.75": '3/4"', "1": '1"', "1.25": '1-1/4"', "1.5": '1-1/2"',
+        "2": '2"', "2.5": '2-1/2"', "3": '3"', "4": '4"', "5": '5"', "6": '6"'
+      };
+      return map[nps] || `${nps}"`;
+    }
+
+    function getIdIn(nps) {
+      const id = PIPE_ID?.[MATERIAL]?.[SCHEDULE]?.[nps];
+      if (!id) throw new Error(`Pipe ID missing for ${MATERIAL} ${SCHEDULE} NPS ${nps}`);
+      return id;
+    }
+
+    // v(ft/s) = 0.408 * GPM / ID(in)^2
+    function velocityFtS(gpm, idIn) {
+      return 0.408 * gpm / (idIn * idIn);
+    }
+
+    function velocityBand(v) {
+ 	 if (v > V_TARGET) return { label: "OVER LIMIT", color: "#dc2626" };
+  	if (v >= 3)       return { label: "OK", color: "#16a34a" };
+ 	 return { label: "LOW", color: "#6b7280" };
+	}
+
+    function recommendMinNps(gpm, vTarget) {
+      for (const nps of NPS_ORDER) {
+        const id = getIdIn(nps);
+        const v = velocityFtS(gpm, id);
+        if (v <= vTarget) return { nps, id, v };
+      }
+      return null;
+    }
+
+    function resetOutputs() {
+      document.getElementById("out_main").innerText = "—";
+      document.getElementById("out_pill").innerText = "READY";
+      document.getElementById("out_pill").style.background = "#6b7280";
+      document.getElementById("out_rec").innerHTML =
+        `<div class="muted">Enter a flow rate above to see the recommended pipe size.</div>`;
+      document.getElementById("out_detail").innerText = "—";
+    }
+
+    function update() {
+      const gpm = Number(document.getElementById("gpm").value || 0);
+
+      if (!gpm || gpm <= 0) {
+        resetOutputs();
+        return;
+      }
+
+      const rec = recommendMinNps(gpm, V_TARGET);
+
+      if (!rec) {
+        document.getElementById("out_main").innerText = "No match in table";
+        document.getElementById("out_pill").innerText = "UPSIZING NEEDED";
+        document.getElementById("out_pill").style.background = "#dc2626";
+        document.getElementById("out_rec").innerHTML = `
+          <div class="recStrong">None (max size shown is 6")</div>
+          <div class="muted">Add larger sizes to the table or reduce target flow.</div>
+        `;
+        document.getElementById("out_detail").innerText =
+          `Inputs: ${gpm.toFixed(0)} GPM • PVC SCH 80\n` +
+          `Result: No NPS in the current list meets the target.`;
+           return;
+      }
+
+      // Show the recommended pipe size as the main output
+      const band = velocityBand(rec.v);
+      document.getElementById("out_main").innerText = `Recommended: ${formatNps(rec.nps)}`;
+      document.getElementById("out_pill").innerText = band.label;
+      document.getElementById("out_pill").style.background = band.color;
+
+      document.getElementById("out_rec").innerHTML = `
+         <div class="recStrong">${formatNps(rec.nps)} • ${rec.v.toFixed(2)} ft/s (ID ${rec.id.toFixed(3)}")</div>
+      `;
+
+      
+      document.getElementById("out_detail").innerText =
+  `Inputs: ${gpm.toFixed(0)} GPM • PVC SCH 80\n` +
+  `Recommended Minimum: ${formatNps(rec.nps)} (${rec.v.toFixed(2)} ft/s)`;
+    }
+
+    // Wire up
+    window.addEventListener("DOMContentLoaded", () => {
+      resetOutputs();
+      document.getElementById("gpm").addEventListener("input", update);
+    });
+  </script>
+
+</body>
+</html>
